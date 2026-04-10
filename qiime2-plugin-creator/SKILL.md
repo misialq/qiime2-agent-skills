@@ -1,6 +1,6 @@
 ---
 name: qiime2-plugin-creator
-description: Scaffold new QIIME 2 plugins by writing files directly from a bundled template. Use when an agent needs to create or bootstrap a QIIME 2 plugin project.
+description: Scaffold new QIIME 2 plugins from the official template
 ---
 
 # QIIME 2 Plugin Creator
@@ -21,7 +21,9 @@ Create a new QIIME 2 plugin project by writing files directly from the bundled t
    - The `ci.yml` GitHub Actions workflow uses `${{ matrix.os }}` etc. — write these literally, they are GitHub Actions expressions.
    - Do NOT create `.copier-answers.yml` — it is a Copier artifact and is not needed.
 5. Copy the binary test fixture `static/table-1.biom` into `{module_name}/tests/data/table-1.biom` in the generated project.
-6. Initialize a git repository in the new project directory with `git init` and create an initial commit.
+6. Create a conda environment using one of the environment files but install the plugin from the current working directory using pip rather than point to a GitHub repository (it may not exist yet). Never modify existing conda environments.
+7. Run `qiime dev refresh-cache` in that environment followed by `qiime info`. Make sure that the returned plugin list contains the new plugin.
+8. Initialize a git repository in the new project directory with `git init` and create an initial commit.
 
 ## References
 

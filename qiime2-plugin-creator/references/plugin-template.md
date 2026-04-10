@@ -13,8 +13,7 @@ This document contains the complete file structure and contents for a QIIME 2 pl
 ├── .gitignore
 ├── .github/
 │   └── workflows/
-│       ├── ci.yml
-│       └── release-env.yml
+│       └── ci.yml
 ├── environment-files/
 │   ├── {package_name}-qiime2-{target_distro}-dev.yml
 │   └── {package_name}-qiime2-{target_distro}-release.yml
@@ -22,7 +21,7 @@ This document contains the complete file structure and contents for a QIIME 2 pl
 ├── Makefile
 ├── README.md
 ├── pyproject.toml
-├── .copier-answers.yml
+├── setup.cfg
 └── {module_name}/
     ├── __init__.py
     ├── _methods.py
@@ -199,7 +198,7 @@ _version.py
 ### `.github/workflows/ci.yml`
 
 ```yaml
-name: Test and lint
+name: Test build
 
 on:
   pull_request:
@@ -208,17 +207,29 @@ on:
     branches: ["main"]
 
 jobs:
-  build-and-test-qiime2-{target_distro}-dev:
+  build-q2-{plugin_name}:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-15-intel]
 
     steps:
-    - uses: actions/checkout@v2
+    - name: checkout source
+      uses: actions/checkout@v6.0.2
+
+    - name: set up python 3.12
+      uses: actions/setup-python@v6.2.0
+      with:
+        python-version: 3.12
+
+    - name: install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -q flake8
+        pip install -q https://github.com/qiime2/q2lint/archive/master.zip
 
     - name: Set up Conda
-      uses: conda-incubator/setup-miniconda@v3
+      uses: qiime2-cutlery/setup-miniconda@v3
       with:
         activate-environment: {package_name}-qiime2-{target_distro}-dev
         environment-file: environment-files/{package_name}-qiime2-{target_distro}-dev.yml
@@ -226,263 +237,32 @@ jobs:
 
     - name: Install plugin
       shell: bash -l {0}
-      run: make install
-
-    - name: Run tests
-      shell: bash -l {0}
-      run: make test
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-    - name: checkout source
-      uses: actions/checkout@v6
-
-    - name: set up python 3.11
-      uses: actions/setup-python@v6
-      with:
-        python-version: 3.11
-
-    - name: install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -q https://github.com/qiime2/q2lint/archive/master.zip
-        pip install -q flake8
+        cd {package_name}
+        make install
 
-    - name: run flake8
-      run: flake8
+    - name: Call info on the deployment
+      shell: bash -l {0}
+      run: |
+        qiime info
 
-    - name: run q2lint
-      run: q2lint
-```
+    - name: Call --help on plugin
+      shell: bash -l {0}
+      run: |
+        qiime {plugin_name} --help
 
-### `.github/workflows/release-env.yml`
+    - name: Test plugin
+      shell: bash -l {0}
+      run: |
+        cd {package_name}
+        make test
 
-```yaml
-name: community-release-env
-permissions:
-  contents: write
-  pull-requests: write
-on:
-  release:
-    types: [published]
-
-jobs:
-  create-pr-and-install-env:
-    runs-on: ubuntu-latest
-    steps:
-      - name: 'checkout source'
-        uses: actions/checkout@v4
-
-      - name: Determine default branch
-        id: default-branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "DEFAULT_BRANCH=${{ github.event.repository.default_branch }}" >> $GITHUB_OUTPUT
-
-      - name: Get release info
-        id: get-release-name
-        run: |
-          echo "RELEASE_TAG=${{ github.event.release.tag_name }}" >> $GITHUB_ENV
-          echo "RELEASE_TAG=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
-
-      - name: Get released_epoch from data.yaml
-        run: |
-          pip install --upgrade pyyaml
-          python - <<EOF
-          import os
-          import requests
-          import yaml
-
-          data_url = \
-            'https://raw.githubusercontent.com/qiime2/distributions/refs/heads/dev/data.yaml'
-
-          try:
-            response = requests.get(data_url, allow_redirects=True)
-            response.raise_for_status()
-
-            content = response.content.decode('utf-8')
-            data_yaml = yaml.safe_load(content)
-            released_epoch = data_yaml['released_epoch']
-
-            with open(os.environ['GITHUB_ENV'], 'a') as envfile:
-              envfile.write(f'RELEASED_EPOCH={released_epoch}\n')
-
-          except requests.exceptions.RequestException as e:
-            print(f'Error fetching the URL: {e}')
-          except yaml.YAMLError as e:
-            print(f'Error parsing YAML: {e}')
-          EOF
-
-      - name: Construct and export env vars from copier answers
-        shell: bash
-        run: |
-          PACKAGE_NAME=$(grep -oP '^package_name:\s*\K.+' .copier-answers.yml || true)
-          TARGET_DISTRO=$(grep -oP '^target_distro:\s*\K.+' .copier-answers.yml || true)
-
-          echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
-          echo "TARGET_DISTRO=$TARGET_DISTRO" >> $GITHUB_ENV
-
-      - name: Modify existing release env file
-        run: |
-          pip install --upgrade pyyaml
-          python - <<EOF
-          import os
-          import re
-          import yaml
-
-          pkg_name = os.environ['PACKAGE_NAME']
-          target_distro = os.environ['TARGET_DISTRO']
-          released_epoch = os.environ['RELEASED_EPOCH']
-
-          release_env_path = \
-            f'environment-files/{pkg_name}-qiime2-{target_distro}-release.yml'
-
-          if not os.path.exists(release_env_path):
-            raise Exception(f'{release_env_path} not found.')
-
-          with open(release_env_path, 'r') as fh:
-            env_data = yaml.safe_load(fh)
-
-          channels = env_data.get('channels', [])
-          for i, channel in enumerate(channels):
-            if 'https://packages.qiime2.org/qiime2/' in channel:
-              updated_channel = re.sub(
-                  r'(https://packages\.qiime2\.org/qiime2/)([^/]+)(/.+)',
-                  lambda m: f"{m.group(1)}{released_epoch}{m.group(3)}",
-                  channel
-              )
-
-              channels[i] = updated_channel
-              break
-
-            else:
-              raise ValueError('No QIIME 2 package channel found.')
-
-          pip_deps = None
-          for dep in env_data.get('dependencies', []):
-            if isinstance(dep, dict) and 'pip' in dep:
-              pip_deps = dep['pip']
-              break
-
-          if pip_deps is None:
-            raise ValueError('No pip section found under dependencies.')
-
-          updated = False
-          for i, entry in enumerate(pip_deps):
-            pattern = rf'^{pkg_name}@git\+https://github\.com/.+?\.git@[\w.-]+$'
-
-            if re.match(pattern, entry):
-              new_release = os.environ.get('RELEASE_TAG')
-
-              if not new_release:
-                raise ValueError('New Github release tag not found.')
-
-              pip_deps[i] = re.sub(r"(@git\+.+?\.git@)[\w.-]+",
-                  lambda m: f"{m.group(1)}{new_release}", entry
-              )
-              updated = True
-              break
-
-          if not updated:
-            raise ValueError(f'No pip install found for package {pkg_name}.')
-
-          new_env_path = f'environment-files/{pkg_name}-qiime2-{target_distro}-{released_epoch}-release-{os.environ['RELEASE_TAG']}.yml'
-          with open(new_env_path, 'w') as fh:
-            yaml.safe_dump(env_data, fh, sort_keys=False)
-
-          print(f'Created new release environment file: {new_env_path}.')
-          EOF
-
-      - name: Create pull request with updated release env file
-        uses: qiime2-cutlery/create-pull-request@v5
-        env:
-          RELEASE_TAG: ${{ steps.get-release-name.outputs.RELEASE_TAG }}
-          DEFAULT_BRANCH: ${{ steps.default-branch.outputs.DEFAULT_BRANCH }}
-        with:
-          token: ${{ github.token }}
-          branch: automated/release-${{ env.RELEASE_TAG }}-env-file-updates
-          base: ${{ env.DEFAULT_BRANCH }}
-          title: "[${{ env.RELEASE_TAG }}] Automated updates to release environment file"
-          body: |
-            <details>
-            <summary><i>What does this pull request do?</i></summary>
-
-            <br>
-
-            This pull request automatically updates your plugin's release environment file upon detection of a newly published GitHub release.
-
-            Once this pull request has been opened, an environment installation test is automatically triggered through Github Actions to ensure the updated environment is valid and installable.
-
-            </details>
-
-            ---
-
-            **!! PLEASE REVIEW THE COMMENT BELOW BEFORE MERGING !!**
-
-            After this pull request is opened, an environment installation test will run automatically. Once the test completes, a comment will be added to this pull request with the result.
-
-            - If the test passes: You'll see a green checkmark comment indicating the environment is installable.
-            - If the test fails: You'll see a red X comment with a link to the workflow logs to help troubleshoot.
-
-            If you run into issues and aren't sure how to proceed, feel free to reach out on the [QIIME 2 Forum](https://forum.qiime2.org)!
-
-            Happy QIIMEing
-          author: 'q2d2 <q2d2.noreply@gmail.com>'
-          committer: 'q2d2 <q2d2.noreply@gmail.com>'
-          commit-message: |
-            automated update of release environment file for "${{ env.RELEASE_TAG }}"
-
-      - name: Set up conda
-        uses: qiime2-cutlery/setup-miniconda@v3
-        with:
-          activate-environment: test-env
-          miniforge-version: latest
-
-      - name: Try installing new release env and check version info
-        run: |
-          set -e
-          git checkout automated/release-${{ env.RELEASE_TAG }}-env-file-updates
-          ENV_PATH="environment-files/${{ env.PACKAGE_NAME }}-qiime2-${{ env.TARGET_DISTRO }}-${{ env.RELEASED_EPOCH }}-release-${{ env.RELEASE_TAG }}.yml"
-
-          conda env create -n test-release-env -f "$ENV_PATH"
-
-          source "$(conda info --base)/etc/profile.d/conda.sh"
-
-          echo "Activating 'test-release-env'..."
-          if conda activate test-release-env; then
-            echo "Activation succeeded."
-            conda list
-            echo "INSTALL_SUCCESS=true" >> $GITHUB_ENV
-          else
-            echo "Activation failed!"
-            echo "INSTALL_SUCCESS=false" >> $GITHUB_ENV
-            exit 1
-          fi
-
-      - name: Get job ID
-        if: always()
-        id: get-job-id
-        uses: qiime2-cutlery/gha-jobid-action@v1.4.0
-        with:
-          job_name: create-pr-and-install-env
-
-      - name: Add comment to PR with env install result
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          JOB_URL: ${{ steps.get-job-id.outputs.html_url }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          INSTALL_SUCCESS: ${{ env.INSTALL_SUCCESS }}
-        run: |
-          if [[ "$INSTALL_SUCCESS" == "true" ]]; then
-            gh pr comment "$PR_NUMBER" \
-              --body ":white_check_mark: **Environment install test passed!**"
-          else
-            gh pr comment "$PR_NUMBER" \
-              --body ":x: **Environment install test failed.** Please check the [workflow logs]($JOB_URL) for details."
-          fi
+    - name: Lint plugin
+      shell: bash -l {0}
+      run: |
+        cd {package_name}
+        flake8
+        q2lint
 ```
 
 ### `environment-files/{package_name}-qiime2-{target_distro}-dev.yml`
@@ -634,6 +414,16 @@ dev: all
 clean: distclean
 
 distclean: ;
+```
+
+### `setup.cfg`
+```
+[flake8]
+max-line-length = 88
+extend-ignore = E203
+
+[tool.isort]
+profile = "black"
 ```
 
 ### `pyproject.toml`

@@ -27,7 +27,7 @@ Retrieved: April 5, 2026
   Purpose: Author email.
 
 - `project_url`
-  Default: `https://example.com`
+  Default: `https://github.com`
   Purpose: Main plugin website.
 
 - `plugin_description`
@@ -40,7 +40,7 @@ Retrieved: April 5, 2026
 
 - `target_distro`
   Default: `tiny`
-  Choices: `tiny`, `amplicon`, `metagenome`
+  Choices: `tiny`, `amplicon`, `moshpit`
   Purpose: Target QIIME 2 distribution.
 
 - `license`
