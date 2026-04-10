@@ -1,6 +1,6 @@
 # QIIME 2 Test Patterns
 
-Use this file after inspecting the target repo. These examples come from `q2-annotate` and should anchor the default shape of new tests.
+Use this file after inspecting the target repo. These examples come from `q2-annotate` (https://github.com/bokulich-lab/q2-annotate) and should anchor the default shape of new tests.
 
 ## Patterns to Copy
 
@@ -16,6 +16,12 @@ Examples:
 - `q2_annotate/kaiju/tests/test_classification.py`
 - `q2_annotate/tests/test_utils.py`
 - `q2_annotate/kraken2/tests/test_filter.py`
+
+### `setUp` vs `setUpClass`
+
+- Use `setUp` when each test needs its own isolated state — mocks, copies of mutable fixtures, or per-test temporary directories. `setUp` runs before every test method.
+- Use `setUpClass` only for expensive, read-only shared state that every test in the class can safely share, such as loading a large artifact or constructing a complex object once.
+- When in doubt, default to `setUp`. Shared state in `setUpClass` can cause hard-to-diagnose test-order dependencies.
 
 ### Reusable fixture files in `tests/data`
 
@@ -78,6 +84,7 @@ Examples:
 - Do not let unit tests hit real executables, remote services, or external databases.
 - Do not patch the wrong import path. Patch the name looked up by the module under test.
 - Do not broaden scope into end-to-end plugin behavior if the request is for unit coverage.
+- Do not use `setUpClass` for mutable state — mutations bleed across tests and cause order-dependent failures.
 
 ## Legacy Exceptions
 
@@ -85,6 +92,36 @@ Some older tests in `q2-annotate` create temporary content in `setUp`, such as a
 
 ## Execution Defaults
 
-- Default environment: `moshpit-dev`
-- Default command: `conda run -n moshpit-dev python -m pytest path/to/test_file.py`
-- Narrow iteration first, widen to package or full-suite runs only after the target tests pass.
+### Discover the environment
+
+Inspect `environment-files/` in the repo root. Find the most recent development environment file and read the `name:` field from the top of the file. Use that name in all `conda run` commands below.
+
+### Prepare the environment
+
+- **If the environment already exists** — use it as-is. Never modify an existing conda environment.
+- **If the environment does not exist** — create it from the environment file, then install the plugin:
+
+```bash
+conda env create -f environment-files/<env-file>.yml
+conda run -n <env-name> pip install -e . --no-deps --no-build-isolation
+```
+
+Only re-run the `pip install` step if `pyproject.toml` dependencies change after the environment was created.
+
+### Run tests — narrow first, then widen
+
+```bash
+# Single test
+conda run -n <env-name> python -m pytest path/to/test_file.py::TestClass::test_name -x --tb=short -v
+
+# Full test class
+conda run -n <env-name> python -m pytest path/to/test_file.py::TestClass -x --tb=short -v
+
+# Full test file
+conda run -n <env-name> python -m pytest path/to/test_file.py -x --tb=short -v
+
+# Full package suite — run only after the narrower selections pass
+conda run -n <env-name> python -m pytest path/to/tests/ --tb=short
+```
+
+Use `-x` (fail fast) while iterating. Use `--tb=long` only when `--tb=short` truncates a traceback needed for diagnosis.
