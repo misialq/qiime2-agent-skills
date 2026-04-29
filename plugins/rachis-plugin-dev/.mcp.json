@@ -1,0 +1,7 @@
+{
+    "rachis-mcp": {
+        "type": "http",
+        "url": "https://rachis-mcp.bokulich-lab.workers.dev/mcp",
+        "description": "Rachis MCP Server"
+    }
+}
